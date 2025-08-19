@@ -1,57 +1,33 @@
-# client.py - The Client
+# main.py - The Server
 import asyncio
-import websockets
-import threading
-import sys
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from typing import List
 
-# --- IMPORTANT: CHANGE THIS URL ---
-# This will be the URL you get from Render in Step 4
-SERVER_URL = "ws://your-chat-app.onrender.com/ws" 
-# Note: Use wss:// if your server uses SSL (Render does)
-# So it should be: "wss://your-chat-app.onrender.com/ws"
+# Create the FastAPI app instance
+app = FastAPI()
 
+# A list to keep track of all active WebSocket connections
+connections: List[WebSocket] = []
 
-async def receive_messages(websocket):
-    """Listens for incoming messages and prints them."""
+# This is the main endpoint for your chat
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    # Accept the new client connection
+    await websocket.accept()
+    connections.append(websocket)
+    print(f"New client connected. Total clients: {len(connections)}")
+    
     try:
-        async for message in websocket:
-            # Clears the current line and prints the message
-            print("\r" + " " * 60, end="") # Clear line
-            print(f"\rUnknown: {message}")
-            print("You: ", end="", flush=True) # Reprint your prompt
-    except websockets.exceptions.ConnectionClosed:
-        print("\nConnection to server lost.")
-
-def send_messages(websocket_uri):
-    """Handles user input and sends it to the server."""
-    # This part runs in the main thread
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    async def sender():
-        async with websockets.connect(websocket_uri) as websocket:
-            # Start the receiver task in the background
-            receiver_task = asyncio.create_task(receive_messages(websocket))
+        # Loop forever, waiting for messages from this client
+        while True:
+            # Wait for a message
+            data = await websocket.receive_text()
             
-            print("Connected to chat! Type your message and press Enter.")
-            
-            while True:
-                # Get input from the user in a non-blocking way
-                message = await loop.run_in_executor(None, sys.stdin.readline)
-                message = message.strip()
-                
-                if message:
-                    await websocket.send(message)
-                # This gives the receiver a chance to run
-                await asyncio.sleep(0.1)
-
-    try:
-        loop.run_until_complete(sender())
-    except KeyboardInterrupt:
-        print("\nExiting chat.")
-
-if __name__ == "__main__":
-    # Replace the URL with the wss one for Render
-    secure_url = SERVER_URL.replace("ws://", "wss://")
-    print("Connecting to chat server...")
-    send_messages(secure_url)
+            # Broadcast the received message to all other clients
+            for connection in connections:
+                if connection != websocket: # Don't send the message back to the sender
+                    await connection.send_text(data)
+    except WebSocketDisconnect:
+        # If a client disconnects, remove them from the list
+        connections.remove(websocket)
+        print(f"Client disconnected. Total clients: {len(connections)}")
